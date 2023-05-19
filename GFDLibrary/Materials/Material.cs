@@ -538,7 +538,7 @@ namespace GFDLibrary.Materials
         Bit2            = 1 << 02,
         Bit3            = 1 << 03,
         EnableVertColors = 1 << 04,
-        Bit5           = 1 << 05,
+        OpaqueAlpha1           = 1 << 05,
         Bit6           = 1 << 06,
         EnableLight      = 1 << 07,
         Bit8          = 1 << 08,
@@ -546,11 +546,11 @@ namespace GFDLibrary.Materials
         Bit10          = 1 << 10,
         EnableLight2     = 1 << 11,
         PurpleWireframe  = 1 << 12,
-        Bit13         = 1 << 13,
+        OpaqueAlpha2         = 1 << 13,
         ReceiveShadow    = 1 << 14,
         CastShadow       = 1 << 15,
         HasAttributes    = 1 << 16,
-        Bit17   = 1 << 17,
+        HasOutline   = 1 << 17,
         Bit18   = 1 << 18,
         DisableBloom     = 1 << 19,
         HasDiffuseMap    = 1 << 20,
@@ -571,5 +571,6 @@ namespace GFDLibrary.Materials
     {
         Opaque,
         Translucent,
+        BlackAsAlpha
     }
 }
