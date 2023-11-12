@@ -14,7 +14,7 @@ namespace GFDStudio
     {
         public static Assembly Assembly { get; } = Assembly.GetExecutingAssembly();
         public static AssemblyName AssemblyName { get; } = Assembly.GetName();
-        public static string Name { get; } = "PogPogPogPogPogPog"; //"GFD Studio";
+        public static string Name { get; } = "PogreCPogStudioPog"; //"GFD Studio";
         public static Version Version { get; } = AssemblyName.Version;
 
         public static bool DarkMode { get; set; } = true;
