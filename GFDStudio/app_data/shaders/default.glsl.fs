@@ -1,4 +1,4 @@
-﻿ #version 330 core
+#version 330 core
 
 // thanks dniwetamp
 
@@ -7,6 +7,8 @@ in vec3 fPosition;
 in vec3 fNormal;
 in vec3 fFacingNormal;
 in vec2 fTex0;
+in vec2 fTex1;
+in vec2 fTex2;
 in vec4 fColor0;
 
 // out
@@ -14,18 +16,26 @@ out vec4 oColor;
 
 // samplers
 uniform sampler2D uDiffuse;
+uniform sampler2D uNormal;
 uniform sampler2D uSpecular;
 uniform sampler2D uReflection;
+uniform sampler2D uHighlight;
+uniform sampler2D uGlow;
+uniform sampler2D uNight;
+uniform sampler2D uDetail;
 uniform sampler2D uShadow;
 
 // material properties
 uniform int uMatFlags;
 uniform vec4 uMatAmbient;
 uniform vec4 uMatDiffuse;
+uniform vec4 uMatSpecular;
 uniform vec4 uMatEmissive;
 uniform float uMatReflectivity;
 uniform int DrawMethod;
+uniform int HighlightMapBlendMode;
 uniform int alphaClip;
+uniform int TexcoordFlags;
 uniform bool uMatHasType0;
 uniform bool uMatHasType1;
 uniform bool uMatHasType4;
@@ -39,186 +49,265 @@ uniform float uMatToonShadowThreshold;
 uniform float uMatToonShadowFactor;
 
 // material flags
-const int cMF_OpaqueAlpha1   = 1 << 5;
-const int cMF_OpaqueAlpha2   = 1 << 13;
-const int cMF_EnableLight2   = 1 << 11;
-const int cMF_HasDiffuseMap  = 1 << 20;
-const int cMF_HasSpecularMap = 1 << 22;
-const int cMF_HasReflectionMap = 1 << 23;
-const int cMF_HasShadowMap   = 1 << 28;
+#define MatFlag_HasShadowMap     (1 << 28)
+#define MatFlag_HasDetailMap     (1 << 27)
+#define MatFlag_HasNightMap      (1 << 26)
+#define MatFlag_HasGlowMap       (1 << 25)
+#define MatFlag_HasHighlightMap  (1 << 24)
+#define MatFlag_HasReflectionMap (1 << 23)
+#define MatFlag_HasSpecularMap   (1 << 22)
+#define MatFlag_HasNormalMap     (1 << 21)
+#define MatFlag_HasDiffuseMap    (1 << 20)
+#define MatFlag_HasAttributes    (1 << 16)
+#define MatFlag_OpaqueAlpha2     (1 << 13)
+#define MatFlag_EnableLight2     (1 << 11)
+#define MatFlag_EnableLight      (1 << 7)
+#define MatFlag_OpaqueAlpha1     (1 << 5)
+#define MatFlag_HasVertexColors  (1 << 4)
 
+// huge thanks to Firerabbit for https://godotshaders.com/shader/dither-opacity/
+const float dither_alpha_clip = 0.01;
+const mat4 mtrx_dither = mat4(
+    vec4(0.0625, 0.5625, 0.1875,  0.6875),
+    vec4(0.8125, 0.3125, 0.9375,  0.4375),
+    vec4(0.25, 0.75, 0.125, 0.625),
+    vec4(1.0, 0.5, 0.875,  0.375));
 
+float get_dither_value(int x, int y) {
+    return mtrx_dither[x][y];
+}
+
+/*  --- These are unused for now ---
 float mapRange(float value, float min1, float max1, float min2, float max2) {
   return min2 + (value - min1) * (max2 - min2) / (max1 - min1);
 }
 
-float RGBAtoGray(vec4 RGBA) {
-    return (RGBA.r+RGBA.g+RGBA.b)/3.0;
+float RGBtoGray(vec3 RGB) {
+    return (RGB.r+RGB.g+RGB.b)/3.0;
 }
 
 bool hasBitFlag(int bitField, int bitFlag){
     return ((bitField & bitFlag) != 0);
+}
+*/
+
+int bitfieldExtract(int value, int offset, int bits){
+    return (value >> offset) & ((1 << bits) - 1);
 }
 
 bool hasMatFlag(int bitFlag){
     return ((uMatFlags & bitFlag) != 0);
 }
 
-vec4 DefaultShader(vec4 diffuseColor, vec4 specularColor, vec4 reflectionColor, vec4 shadowColor)
+vec3 calcTangent(vec3 normal, vec3 pos, vec2 texCoord)
 {
-    vec3 lightDirection = vec3( 10.0, 45.0, 10.0 );
-    //  basic shadow using normals
-    float phongShadow = dot(normalize(lightDirection),normalize(fFacingNormal));
-    float clampedPhongShadow = clamp(phongShadow, 0.0, 1.0);
-    if (!hasMatFlag(cMF_EnableLight2))
-        clampedPhongShadow = 1.0;
-    vec4 shadow = clamp((vec4(clampedPhongShadow, clampedPhongShadow, clampedPhongShadow, 1.0) * vec4(shadowColor.rgb, 1.0) + uMatAmbient), 0, 1);
-    // Phong specular
-    vec3 ref = reflect(-normalize(lightDirection), normalize(fFacingNormal));
-    float specAngle = max(dot(ref, normalize(-fPosition)), 0.0);
-    vec4 specular = vec4(0.0);
-    if ( uMatEmissive.a > 0.0 )
-        specular = vec4(pow(specAngle, uMatEmissive.a));
-    vec4 accumulatedColor = diffuseColor;
-    if (hasMatFlag(cMF_HasSpecularMap) && hasMatFlag(cMF_HasReflectionMap)){
-        accumulatedColor.rgb += uMatEmissive.rgb * specular.rgb * specularColor.rgb;
-        accumulatedColor.rgb += specularColor.r * reflectionColor.rgb * uMatReflectivity;
-    }
-    else{
-        accumulatedColor.rgb += uMatEmissive.rgb * specular.rgb * specularColor.rgb;
-        accumulatedColor.rgb += reflectionColor.rgb * uMatReflectivity;
-    }
-    accumulatedColor *= shadow;
-    return accumulatedColor;
+    vec3 tangent;
+    vec3 edge1 = dFdx(pos);
+    vec3 edge2 = dFdy(pos);
+    vec2 deltaUV1 = dFdx(texCoord);
+    vec2 deltaUV2 = dFdy(texCoord);
+    float f = 1.0 / (deltaUV1.x * deltaUV2.y - deltaUV2.x * deltaUV1.y);
+    tangent.x = f * (deltaUV2.y * edge1.x - deltaUV1.y * edge2.x);
+    tangent.y = f * (deltaUV2.y * edge1.y - deltaUV1.y * edge2.y);
+    tangent.z = f * (deltaUV2.y * edge1.z - deltaUV1.y * edge2.z);
+
+    return normalize(tangent);
 }
 
-vec4 CharacterShader(vec4 diffuseColor, vec4 specularColor, vec4 reflectionColor, vec4 shadowColor)
+vec4 ShaderInfo(vec4 normalColor)
 {
-    vec4 toonShadow = vec4(1.0);
-    vec3 lightDirection = vec3( 90.0, 45.0, 90.0 );
+    /*
+    Calculates things:
+    x - Base phong shadow (from -1 to 1)
+    y - Clamped phong shadow (from 0 to 1)
+    z - Phong specular higlight
+    w - Rim light
+    */
+    float specular = 0.0;
+    float phongShadow = 1.0;
+    const vec3 lightDirection = normalize(vec3( 90.0, 45.0, 90.0 ));
     vec3 eyePos = normalize( -fPosition );
-    //  basic shadow using normals
-    float phongShadow = dot(normalize(lightDirection),normalize(fFacingNormal));
+    if (hasMatFlag(MatFlag_EnableLight2)){
+        phongShadow = dot(lightDirection, normalColor.xyz);
+    }
     float clampedPhongShadow = clamp(phongShadow, 0.0, 1.0);
-    // Ramp the shadow, copypasted from p5r shader
-    float D = clamp((max(clampedPhongShadow - pow(uMatToonShadowThreshold, 1.8), 0.0) * uMatToonShadowFactor), 0, 1);
-    if (!hasMatFlag(cMF_EnableLight2)){
-        D = 1.0;
+    vec3 refAngle = reflect(-lightDirection, normalColor.xyz);
+    float specAngle = max(dot(refAngle, normalize(-fPosition)), 0.0);
+    if ( uMatEmissive.a > 0.0 ){
+        specular = pow(specAngle, uMatEmissive.a);
     }
-    if (uMatType0Flags != 77)
-        toonShadow = vec4(D, D, D, 1.0);
-    toonShadow.rgb *= shadowColor.rgb;
-    // Calculate rim light, copypasted from p5r shader
-    float NVW = clamp(( dot( fFacingNormal, mix( eyePos, fFacingNormal, -min( phongShadow, 0.0) ) )), 0.0, 1.0);
-    float E = pow(( min( 1.0 - NVW, uMatToonLightThreshold) / uMatToonLightThreshold), uMatToonLightFactor);
-    // Phong Specular
-    vec3 ref = reflect(-normalize(lightDirection), normalize(fFacingNormal));
-    float specAngle = max(dot(ref, normalize(-fPosition)), 0.0);
-    vec4 specular = vec4(0.0);
-    if ( uMatEmissive.a > 0.0 )
-        specular = vec4(pow(specAngle, uMatEmissive.a));
-    //colorize toon shadow, using ambient color values
-    toonShadow.xyz = clamp((toonShadow.xyz + uMatAmbient.xyz), 0, 1);
-    //Calculate accumated color so far
-    vec4 accumulatedColor = diffuseColor;
-    if (hasMatFlag(cMF_HasSpecularMap) && hasMatFlag(cMF_HasReflectionMap)){
-        accumulatedColor.rgb += uMatEmissive.rgb * specular.rgb * specularColor.rgb;
-        accumulatedColor.rgb += specularColor.r * reflectionColor.rgb * uMatReflectivity;
-    }
-    else{
-        accumulatedColor.rgb += uMatEmissive.rgb * specular.rgb * specularColor.rgb;
-        accumulatedColor.rgb += reflectionColor.rgb * uMatReflectivity;
-    }
-    accumulatedColor = mix(accumulatedColor, uMatToonLightColor, E * uMatToonLightColor.a * shadowColor.a );
-    vec4 addedShadow = accumulatedColor * toonShadow;
-    accumulatedColor = mix(accumulatedColor, addedShadow, 1.0 - clamp(uMatToonShadowBrightness, 0, 1));
-    return accumulatedColor;
+    float baseRimLight = clamp(( dot( normalColor.xyz, mix( eyePos, normalColor.xyz, -min( phongShadow, 0.0) ) )), 0.0, 1.0);
+    float rampedRimLight = pow(( min( 1.0 - baseRimLight, uMatToonLightThreshold) / uMatToonLightThreshold), uMatToonLightFactor);
+    return vec4(phongShadow, clampedPhongShadow, specular, rampedRimLight);
 }
 
-vec4 PersonaShader(vec4 diffuseColor, vec4 specularColor, vec4 reflectionColor, vec4 shadowColor)
+void DefaultShader(vec3 specularColor, vec3 reflectionColor, vec4 shadowColor, vec4 inShaderInfo)
 {
-    vec4 toonShadow = vec4(1.0);
-    vec3 lightDirection = vec3( 10.0, 45.0, 10.0 );
-    vec3 eyePos = normalize( -fPosition );
-    float phongShadow = dot(normalize(lightDirection),normalize(fFacingNormal));
-    // Calculate rim light, copypasted from p5r shader
-    float NVW = clamp(( dot( fFacingNormal, mix( eyePos, fFacingNormal, -min( phongShadow, 0.0) ) )), 0.0, 1.0);
-    float E = pow(( min( 1.0 - NVW, uMatToonLightThreshold) / uMatToonLightThreshold), uMatToonLightFactor);
-    // Phong Specular
-    vec3 ref = reflect(-normalize(lightDirection), normalize(fFacingNormal));
-    float specAngle = max(dot(ref, normalize(-fPosition)), 0.0);
-    vec4 specular = vec4(0.0);
-    if ( uMatEmissive.a > 0.0 )
-        specular = vec4(pow(specAngle, uMatEmissive.a));
-    //colorize toon shadow, using ambient color values
-    toonShadow.rgb *= shadowColor.rgb;
+    vec3 phongShadowCol = clamp((inShaderInfo.y * (1.0 - shadowColor.r) + uMatAmbient.rgb), 0, 1);
+    oColor.rgb += uMatEmissive.rgb * inShaderInfo.z * mix(vec3(1.0), specularColor.rgb, float(hasMatFlag(MatFlag_HasSpecularMap)));                                       // Add specular
+    oColor.rgb += reflectionColor.rgb * uMatReflectivity * mix(1.0, specularColor.r, bool(hasMatFlag(MatFlag_HasSpecularMap) && hasMatFlag(MatFlag_HasReflectionMap)));   // Add reflection
+    oColor.rgb *= phongShadowCol;                                                                                                                                         // Add shadow
+}
+
+void CharacterShader(vec3 specularColor, vec3 reflectionColor, vec4 shadowColor, vec4 inShaderInfo)
+{
+    vec3 toonShadowCol = vec3(1.0 - shadowColor.r);
+    float toonShadow = clamp((max(inShaderInfo.y - pow(uMatToonShadowThreshold, 1.8), 0.0) * uMatToonShadowFactor), 0, 1);
+    if (uMatType0Flags != 77) // disable shadows for face material
+        toonShadowCol.rgb *= vec3(toonShadow);
+    toonShadowCol.rgb = clamp((toonShadowCol.rgb + uMatAmbient.rgb), 0, 1);
+    oColor.rgb += uMatEmissive.rgb * inShaderInfo.z * mix(vec3(1.0), specularColor.rgb, float(hasMatFlag(MatFlag_HasSpecularMap)));                                         // Add specular
+    oColor.rgb += reflectionColor.rgb * uMatReflectivity * mix(1.0, specularColor.r, bool(hasMatFlag(MatFlag_HasSpecularMap) && hasMatFlag(MatFlag_HasReflectionMap)));     // Add reflection
+    oColor.rgb = mix(oColor.rgb, uMatToonLightColor.rgb, inShaderInfo.w * uMatToonLightColor.a * shadowColor.a );                                                           // Add rim light
+    oColor.rgb = mix(oColor.rgb, oColor.rgb * toonShadowCol, 1.0 - clamp(uMatToonShadowBrightness, 0, 1));                                                                  // Add shadow
+}
+
+void PersonaShader(vec3 specularColor, vec3 reflectionColor, vec4 shadowColor, vec4 inShaderInfo)
+{
+    vec3 toonShadow = vec3(1.0 - shadowColor.r);
     toonShadow.rgb = clamp((toonShadow.rgb + uMatAmbient.rgb), 0, 1);
-    //Calculate accumated color so far
-    vec4 accumulatedColor = diffuseColor;
-    if (hasMatFlag(cMF_HasSpecularMap) && hasMatFlag(cMF_HasReflectionMap)){
-        accumulatedColor.rgb += uMatEmissive.rgb * specular.rgb * specularColor.rgb;
-        accumulatedColor.rgb += specularColor.r * reflectionColor.rgb * uMatReflectivity;
-    }
-    else{
-        accumulatedColor.rgb += uMatEmissive.rgb * specular.rgb * specularColor.rgb;
-        accumulatedColor.rgb += reflectionColor.rgb * uMatReflectivity;
-    }
-    accumulatedColor.rgb *= toonShadow.rgb;
-    accumulatedColor = mix(accumulatedColor, uMatToonLightColor, E * uMatToonLightColor.a * diffuseColor.a );
-    return accumulatedColor;
+    oColor.rgb += uMatEmissive.rgb * inShaderInfo.z * mix(vec3(1.0), specularColor.rgb, float(hasMatFlag(MatFlag_HasSpecularMap)));                                       // Add specular
+    oColor.rgb += reflectionColor.rgb * uMatReflectivity * mix(1.0, specularColor.r, bool(hasMatFlag(MatFlag_HasSpecularMap) && hasMatFlag(MatFlag_HasReflectionMap)));   // Add reflection
+    oColor.rgb *= toonShadow.rgb;                                                                                                                                         // Add shadow
+    oColor.rgb = mix(oColor.rgb, uMatToonLightColor.rgb, inShaderInfo.w * uMatToonLightColor.a * oColor.a );                                                              // Add rim light
 }
 
 void main()
 {
-    vec4 diffuseColor;
-    vec4 specularColor = vec4(0.0, 0.0, 0.0, 1.0);
-    vec4 reflectionColor = vec4(0.0, 0.0, 0.0, 1.0);
-    vec4 shadowColor = vec4(1.0);
-    vec4 resultColor = vec4(1.0);
-    vec3 eyePos = normalize( -fPosition );
-    vec3 reflectionCoord = reflect( eyePos, fFacingNormal);
-    // setting up texture maps
-    if ( hasMatFlag(cMF_HasDiffuseMap) ){
-        diffuseColor = texture( uDiffuse, fTex0 );
-        diffuseColor.a *= uMatDiffuse.a;
+    float dither_limit = get_dither_value(int(gl_FragCoord.x) % 4, int(gl_FragCoord.y) % 4);
+
+    oColor = uMatDiffuse;
+    vec4 normalColor = vec4(fFacingNormal, 1.0);
+    vec3 specularColor = vec3(0.0);
+    vec3 reflectionColor = vec3(0.0);
+    vec4 shadowColor = vec4(0.0, 0.0, 0.0, 1.0);
+
+    // --- Setting up textures ---
+
+    if (hasMatFlag(MatFlag_HasDiffuseMap)){
+        int texcoord = bitfieldExtract(TexcoordFlags, 0, 3);
+        switch (texcoord){
+            case 0: oColor = texture(uDiffuse, fTex0); break;
+            case 1: oColor = texture(uDiffuse, fTex1); break;
+            case 2: oColor = texture(uDiffuse, fTex2); break;
+        }
+        oColor.a *= uMatDiffuse.a;
+    }
+    if (hasMatFlag(MatFlag_HasNormalMap)){
+        int texcoord = bitfieldExtract(TexcoordFlags, 3, 3);
+        vec3 tangent = vec3(0.0);
+        switch (texcoord){
+            case 0: normalColor = texture(uNormal, fTex0); tangent = calcTangent( fFacingNormal, fPosition, fTex0 ); break;
+            case 1: normalColor = texture(uNormal, fTex1); tangent = calcTangent( fFacingNormal, fPosition, fTex1 ); break;
+            case 2: normalColor = texture(uNormal, fTex2); tangent = calcTangent( fFacingNormal, fPosition, fTex2 ); break;
+        }
+        normalColor.y = 1.0 - normalColor.y; // OpenGL moment
+        vec3 bitangent = cross(fFacingNormal, tangent);
+        mat3 TBN = mat3(tangent, bitangent, fFacingNormal);
+        normalColor.xyz = normalize(normalColor.xyz * 2.0 - 1.0);
+        normalColor.xyz = normalize(TBN * normalColor.xyz);
+    }
+    if (hasMatFlag(MatFlag_HasSpecularMap)){
+        int texcoord = bitfieldExtract(TexcoordFlags, 6, 3);
+        switch (texcoord){
+            case 0: specularColor = texture(uSpecular, fTex0).rgb; break;
+            case 1: specularColor = texture(uSpecular, fTex1).rgb; break;
+            case 2: specularColor = texture(uSpecular, fTex2).rgb; break;
+        }
+    }
+    if (hasMatFlag(MatFlag_HasReflectionMap)){
+        vec3 eyePos = normalize( -fPosition );
+        vec3 reflectionCoord = reflect( eyePos, normalColor.xyz);
+        reflectionColor = texture(uReflection, reflectionCoord.xy).rgb;
+    }
+    if (hasMatFlag(MatFlag_HasHighlightMap)){
+        vec4 highlightColor = vec4(0.0);
+        int texcoord = bitfieldExtract(TexcoordFlags, 12, 3);
+        switch (texcoord){
+            case 0: highlightColor = texture(uHighlight, fTex0); break;
+            case 1: highlightColor = texture(uHighlight, fTex1); break;
+            case 2: highlightColor = texture(uHighlight, fTex2); break;
+        }
+        switch(HighlightMapBlendMode){
+            case 1: oColor.rgb = mix( oColor.rgb, highlightColor.rgb, highlightColor.a * uMatAmbient.a); break;
+            case 2: oColor.rgb += highlightColor.rgb * highlightColor.a * uMatAmbient.a; break;
+            case 3: oColor.rgb -= highlightColor.rgb * highlightColor.a * uMatAmbient.a; break;
+            case 4: oColor.rgb *= highlightColor.rgb * highlightColor.a * uMatAmbient.a; break;
+        }
+    }
+    if (hasMatFlag(MatFlag_HasGlowMap)){
+        vec3 glowColor = vec3(0.0);
+        int texcoord = bitfieldExtract(TexcoordFlags, 15, 3);
+        switch (texcoord){
+            case 0: glowColor = texture(uGlow, fTex0).rgb; break;
+            case 1: glowColor = texture(uGlow, fTex1).rgb; break;
+            case 2: glowColor = texture(uGlow, fTex2).rgb; break;
+        }
+        oColor.rgb += glowColor;
+    }
+    if (hasMatFlag(MatFlag_HasNightMap)){
+        vec3 nightColor = vec3(1.0);
+        int texcoord = bitfieldExtract(TexcoordFlags, 18, 3);
+        switch (texcoord){
+            case 0: nightColor = texture(uNight, fTex0).rgb; break;
+            case 1: nightColor = texture(uNight, fTex1).rgb; break;
+            case 2: nightColor = texture(uNight, fTex2).rgb; break;
+        }
+        oColor.rgb *= nightColor.rgb;
+    }
+    if (hasMatFlag(MatFlag_HasDetailMap)){
+        vec3 detailColor = vec3(0.0);
+        int texcoord = bitfieldExtract(TexcoordFlags, 21, 3);
+        switch (texcoord){
+            case 0: detailColor = texture(uDetail, fTex0).rgb; break;
+            case 1: detailColor = texture(uDetail, fTex1).rgb; break;
+            case 2: detailColor = texture(uDetail, fTex2).rgb; break;
+        }
+        detailColor *= 2.0;
+        oColor.rgb *= detailColor.rgb;
+    }
+    if (hasMatFlag(MatFlag_HasShadowMap)){
+        int texcoord = bitfieldExtract(TexcoordFlags, 24, 3);
+        switch (texcoord){
+            case 0: shadowColor = texture(uShadow, fTex0); break;
+            case 1: shadowColor = texture(uShadow, fTex1); break;
+            case 2: shadowColor = texture(uShadow, fTex2); break;
+        }
+    }
+
+    // --- Selecting the shader ---
+
+    vec4 inShaderInfo = ShaderInfo(normalColor);
+    if (uMatHasType0){
+        CharacterShader(specularColor, reflectionColor, shadowColor, inShaderInfo);
+    }
+    else if(uMatHasType1 || uMatHasType4){
+        PersonaShader(specularColor, reflectionColor, shadowColor, inShaderInfo);
     }
     else{
-        diffuseColor = uMatDiffuse;
+        DefaultShader(specularColor, reflectionColor, shadowColor, inShaderInfo);
     }
-    if ( hasMatFlag(cMF_HasSpecularMap)){
-        specularColor = texture( uSpecular, fTex0 );
-    }
-    if (hasMatFlag(cMF_HasReflectionMap) && DrawMethod != 2){ // not adding reflection to blackasalpha materials (glasses) cuz it looks ugly
-        reflectionColor = texture( uReflection, reflectionCoord.xy );
-    }
-    if (hasMatFlag(cMF_HasShadowMap)){
-        shadowColor = texture( uShadow, fTex0 );
-        shadowColor.rgb = vec3(1.0 - shadowColor.r); // yes, the game only uses the red channel lmao
-    }
-    // selecting the shader
-    if (uMatHasType0)
-        resultColor = CharacterShader(diffuseColor, specularColor, reflectionColor, shadowColor);
-    else if (uMatHasType1 || uMatHasType4)
-        resultColor = PersonaShader(diffuseColor, specularColor, reflectionColor, shadowColor);
-    else
-        resultColor = DefaultShader(diffuseColor, specularColor, reflectionColor, shadowColor);
 
-    if (DrawMethod == 2){
-        resultColor.a *= resultColor.r; // black as alpha does just this ingame lol
-    }
-    if (DrawMethod == 1 || DrawMethod == 2 ){ // can add proper alpha blending in the future maybe
-        if ( resultColor.a < 0.2 )
-            discard;
-    }
-    if (!uMatHasType1 && !uMatHasType4){
-        if (DrawMethod == 0)
-            if ( resultColor.a < 0.01 )
+    // --- Handling transparency
+
+    oColor.a *= mix(1.0, oColor.r, bool(DrawMethod == 2));
+    oColor.a *= mix(1.0, 1.0 - oColor.r, bool(DrawMethod == 4));
+
+    if (DrawMethod == 1 || DrawMethod == 2 || DrawMethod == 4){ // can add proper alpha blending in the future maybe
+        if (oColor.a < dither_limit || oColor.a < dither_alpha_clip)
                 discard;
     }
+    if (!uMatHasType1 && !uMatHasType4){
+        if (DrawMethod == 0 && (!hasMatFlag(MatFlag_OpaqueAlpha1) || !hasMatFlag(MatFlag_OpaqueAlpha2)))
+        {
+            oColor.a = uMatDiffuse.a;
+            if (oColor.a < dither_limit || oColor.a < dither_alpha_clip)
+                discard;
+        }
+    }
 
-    if (hasMatFlag(cMF_OpaqueAlpha1) && hasMatFlag(cMF_OpaqueAlpha2)){
-        if ( resultColor.a < alphaClip / 256.0 )
+    if (hasMatFlag(MatFlag_OpaqueAlpha1) && hasMatFlag(MatFlag_OpaqueAlpha2)){
+        if ( oColor.a < alphaClip / 256.0 )
             discard;
     }
-    oColor = resultColor;
 }
