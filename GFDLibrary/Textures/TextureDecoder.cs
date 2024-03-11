@@ -9,6 +9,12 @@ using GFDLibrary.Textures.DDS;
 using GFDLibrary.Textures.GNF;
 using GFDLibrary.Textures.Swizzle;
 using static CSharpImageLibrary.Headers.DDS_Header;
+using BCnEncoder.Decoder;
+using BCnEncoder.ImageSharp;
+using BCnEncoder.Shared;
+using Microsoft.Toolkit.HighPerformance;
+using SixLabors.ImageSharp.PixelFormats;
+using SixLabors.ImageSharp;
 
 namespace GFDLibrary.Textures
 {
@@ -200,12 +206,52 @@ namespace GFDLibrary.Textures
         {
             try
             {
-                // Prefer DDSCodec -- handles alpha properly but doesn't handle non pow 2 textures & DX10+ formats
-                return DDSCodec.DecompressImage( data );
+                BcDecoder decoder = new BcDecoder();
+                MemoryStream texturestream = new MemoryStream( data );
+                Image<Rgba32> rgba32image = decoder.DecodeToImageRgba32( texturestream );
+
+                // Create the Bitmap with the correct size and pixel format
+                var bitmap = new Bitmap( rgba32image.Width, rgba32image.Height, PixelFormat.Format32bppArgb );
+
+                // Lock the bitmap data for direct access
+                BitmapData bmpData = bitmap.LockBits( new System.Drawing.Rectangle( 0, 0, bitmap.Width, bitmap.Height ), ImageLockMode.WriteOnly, bitmap.PixelFormat );
+
+                unsafe
+                {
+                    // Iterate through each row of the image
+                    for ( int y = 0; y < rgba32image.Height; y++ )
+                    {
+                        // Get the starting address of the current row
+                        byte* ptr = (byte*)bmpData.Scan0 + y * bmpData.Stride;
+
+                        // Iterate through each pixel in the row
+                        for ( int x = 0; x < rgba32image.Width; x++ )
+                        {
+                            // Get the pixel value from the image
+                            var pixel = rgba32image[x, y];
+
+                            // Set the pixel values directly in the bitmap data
+                            ptr[0] = pixel.B; // Blue
+                            ptr[1] = pixel.G; // Green
+                            ptr[2] = pixel.R; // Red
+                            ptr[3] = pixel.A; // Alpha
+
+                            // Move to the next pixel
+                            ptr += 4;
+                        }
+                    }
+                }
+
+                // Unlock the bitmap data to release resources
+                bitmap.UnlockBits( bmpData );
+
+                return bitmap;
             }
             catch ( Exception )
             {
+                // :02Shrug:
             }
+
 
             try
             {

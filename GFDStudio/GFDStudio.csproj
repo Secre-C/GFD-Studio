@@ -4,7 +4,7 @@
     <OutputType>WinExe</OutputType>
     <TargetFramework>net6.0-windows</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
-    <Version>0.6.9</Version>
+    <Version>0.7.6</Version>
     <Authors>TGE</Authors>
     <Company>TGE</Company>
     <ApplicationIcon>app_data\icons\main_icon.ico</ApplicationIcon>
@@ -13,7 +13,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="DarkModeUI" Version="3.1.0" />
     <PackageReference Include="MetroSet_UI" Version="2.0.0" />
     <PackageReference Include="Newtonsoft.Json" Version="9.0.1" />
     <PackageReference Include="Ookii.Dialogs.Wpf" Version="3.0.1" />
@@ -22,7 +21,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\yet-another-tab-control\GrayIris.Utilities.csproj" />
     <ProjectReference Include="..\GFDLibrary.Rendering.OpenGL\GFDLibrary.Rendering.OpenGL.csproj" />
     <ProjectReference Include="..\GFDLibrary\GFDLibrary.NET6.csproj" />
   </ItemGroup>
