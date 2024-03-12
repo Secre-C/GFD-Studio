@@ -1,12 +1,6 @@
 [submodule "Dependencies/Scarlet"]
 	path = Dependencies/Scarlet
-	url = https://github.com/xdanieldzd/Scarlet
-[submodule "tga-decoder-cs"]
-	path = tga-decoder-cs
-	url = https://github.com/Ariq139/tga-decoder-cs
-[submodule "BCnEncoder.NET"]
-	path = BCnEncoder.NET
-	url = https://github.com/Nominom/BCnEncoder.NET
-[submodule "yet-another-tab-control"]
-	path = yet-another-tab-control
-	url = https://github.com/realistschuckle/yet-another-tab-control
+	url = https://github.com/tge-was-taken/Scarlet
+[submodule "Dependencies/tga-decoder-cs"]
+	path = Dependencies/tga-decoder-cs
+	url = https://github.com/tge-was-taken/tga-decoder-cs
